@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const Study = require("../models/study");
 const { verifyFirebaseToken } = require("../middleware/auth");
 
@@ -36,6 +37,162 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+function runAnalysisAndGetData(pdfPath) {
+  return new Promise((resolve, reject) => {
+    const scriptDir = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "TechTransfer_Chatbot-Image_Worthiness_Removed"
+    );
+    const pythonScriptPath = path.join(scriptDir, "process_dataset_folder.py");
+
+    const pdfNameWithoutExt = path.basename(pdfPath, path.extname(pdfPath));
+    const outputJsonName = `${pdfNameWithoutExt}_qna_data_batched.json`;
+    const outputJsonPath = path.join(scriptDir, outputJsonName);
+
+    console.log(`---> Spawning Python script and waiting for completion...`);
+    console.log(`      Script: ${pythonScriptPath}`);
+    console.log(`      PDF Input: ${pdfPath}`);
+    console.log(`      Expected JSON Output: ${outputJsonPath}`);
+
+    const pythonProcess = spawn("python", [
+      pythonScriptPath,
+      pdfPath,
+      "--output_answers_dir",
+      scriptDir,
+    ]);
+
+    let stderr = "";
+
+    pythonProcess.stdout.on("data", (data) => {
+      console.log(`[Python Script STDOUT]: ${data}`);
+    });
+
+    pythonProcess.stderr.on("data", (data) => {
+      console.error(`[Python Script STDERR]: ${data}`);
+      stderr += data.toString();
+    });
+
+    pythonProcess.on("close", (code) => {
+      console.log(`---> Python script finished with exit code ${code}`);
+      if (code === 0) {
+        if (fs.existsSync(outputJsonPath)) {
+          try {
+            const jsonData = fs.readFileSync(outputJsonPath, "utf-8");
+            const parsedData = JSON.parse(jsonData);
+
+            try {
+              fs.unlinkSync(outputJsonPath);
+              const contextFilePath = parsedData.processed_text_file_source;
+              if (contextFilePath && fs.existsSync(contextFilePath)) {
+                fs.unlinkSync(contextFilePath);
+                const contextDir = path.dirname(contextFilePath);
+                if (fs.readdirSync(contextDir).length === 0) {
+                  fs.rmdirSync(contextDir);
+                }
+              }
+            } catch (cleanupError) {
+              console.warn("Could not clean up analysis files:", cleanupError);
+            }
+
+            resolve(parsedData);
+          } catch (readError) {
+            reject(
+              new Error(
+                `Failed to read or parse the output JSON file. Error: ${readError.message}`
+              )
+            );
+          }
+        } else {
+          reject(
+            new Error(
+              `Python script finished successfully (code 0), but the expected output JSON file was not found at ${outputJsonPath}.`
+            )
+          );
+        }
+      } else {
+        reject(
+          new Error(
+            `Python script failed with exit code ${code}. Stderr: ${
+              stderr || "No stderr output."
+            }`
+          )
+        );
+      }
+    });
+
+    pythonProcess.on("error", (err) => {
+      console.error("Failed to start Python process.", err);
+      reject(
+        new Error(
+          `Failed to start Python process. Make sure 'python' is in your system's PATH. Error: ${err.message}`
+        )
+      );
+    });
+  });
+}
+
+router.post(
+  "/analyze-document",
+  verifyFirebaseToken,
+  upload.single("study_document"),
+  async (req, res) => {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ message: "No document uploaded for analysis." });
+    }
+
+    const tempPdfPath = req.file.path;
+    console.log(`Received file for analysis: ${tempPdfPath}`);
+
+    try {
+      const analysisData = await runAnalysisAndGetData(tempPdfPath);
+
+      const qa_pairs = [];
+      if (analysisData.answer_batches) {
+        Object.values(analysisData.answer_batches).forEach((batch) => {
+          (batch || []).forEach((item) => {
+            qa_pairs.push({
+              question: item.question,
+              answer: item.answer,
+            });
+          });
+        });
+      }
+
+      const responsePayload = {
+        title: analysisData.extracted_metadata?.title || "",
+        abstract: analysisData.extracted_metadata?.abstract || "",
+        brief_description:
+          analysisData.extracted_metadata?.brief_description || "",
+        genres: analysisData.extracted_metadata?.genres || [],
+        questions: qa_pairs,
+      };
+
+      res.status(200).json(responsePayload);
+    } catch (error) {
+      console.error("Analysis script failed:", error);
+      res
+        .status(500)
+        .json({ message: "Failed to analyze document.", error: error.message });
+    } finally {
+      try {
+        if (fs.existsSync(tempPdfPath)) {
+          fs.unlinkSync(tempPdfPath);
+          console.log(`Cleaned up temporary PDF: ${tempPdfPath}`);
+        }
+      } catch (cleanupError) {
+        console.error(
+          `Failed to clean up temporary PDF: ${tempPdfPath}`,
+          cleanupError
+        );
+      }
+    }
+  }
+);
 
 router.get("/", async (req, res) => {
   try {
@@ -103,11 +260,11 @@ router.post(
   "/",
   verifyFirebaseToken,
   upload.array("study_document_files", 5),
+
   async (req, res) => {
     const researcher_id = req.user.uid;
     try {
       const { title, abstract, brief_description, patent_status } = req.body;
-
       if (!title || !abstract || !brief_description) {
         if (req.files)
           req.files.forEach((file) => {
@@ -161,6 +318,10 @@ router.post(
               file_location: relativePath,
             });
           } catch (renameError) {
+            console.error(
+              `Error renaming file from ${file.path} to ${finalPath}:`,
+              renameError
+            );
             try {
               fs.unlinkSync(file.path);
             } catch (e) {
@@ -168,15 +329,6 @@ router.post(
             }
           }
         }
-      } else if (parsedDocumentsMetadata.length > 0 && !req.files) {
-        parsedDocumentsMetadata.forEach((metaDoc) => {
-          if (metaDoc.file_location) {
-            processedDbDocuments.push({
-              display_name: metaDoc.display_name || "Untitled Document",
-              file_location: metaDoc.file_location,
-            });
-          }
-        });
       }
 
       let genres = [];
@@ -201,17 +353,6 @@ router.post(
           questions = [];
         }
       }
-      let additional_info = {};
-      if (req.body.additional_info) {
-        try {
-          additional_info =
-            typeof req.body.additional_info === "string"
-              ? JSON.parse(req.body.additional_info)
-              : req.body.additional_info;
-        } catch (e) {
-          additional_info = {};
-        }
-      }
 
       const studyToCreate = {
         researcher_id,
@@ -222,14 +363,11 @@ router.post(
         documents: processedDbDocuments,
         patent_status: patent_status || null,
         questions: Array.isArray(questions) ? questions : [],
-        additional_info:
-          typeof additional_info === "object" && additional_info !== null
-            ? additional_info
-            : {},
       };
 
       const newStudy = new Study(studyToCreate);
       const savedStudy = await newStudy.save();
+
       res.status(201).json(savedStudy);
     } catch (error) {
       if (req.files)
@@ -249,6 +387,7 @@ router.post(
           .status(400)
           .json({ message: "Validation Error", errors: errors });
       }
+      console.error("Server error during study creation:", error);
       res.status(500).json({
         message: "Server error while creating study",
         errorName: error.name,
@@ -433,7 +572,8 @@ router.put(
           console.warn(`Failed to parse genres for update, keeping old.`);
         }
       }
-      if (req.body.questions) {
+
+      if (req.body.questions !== undefined) {
         try {
           study.questions =
             typeof req.body.questions === "string"
@@ -443,6 +583,7 @@ router.put(
           console.warn(`Failed to parse questions for update, keeping old.`);
         }
       }
+
       if (req.body.additional_info) {
         try {
           study.additional_info =

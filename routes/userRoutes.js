@@ -1,7 +1,7 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const { verifyFirebaseToken } = require("../middleware/auth");
-const Study = require("../models/study"); // <-- Dependency restored
+const Study = require("../models/study"); 
 
 const router = express.Router();
 const db = admin.firestore();
