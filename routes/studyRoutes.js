@@ -553,10 +553,15 @@ router.put(
       }
       study.documents = finalDocumentsArray;
 
-      study.title = req.body.title || study.title;
-      study.abstract = req.body.abstract || study.abstract;
-      study.brief_description =
-        req.body.brief_description || study.brief_description;
+      if (req.body.title !== undefined) {
+        study.title = req.body.title;
+      }
+      if (req.body.abstract !== undefined) {
+        study.abstract = req.body.abstract;
+      }
+      if (req.body.brief_description !== undefined) {
+        study.brief_description = req.body.brief_description;
+      }
       study.patent_status =
         req.body.patent_status !== undefined
           ? req.body.patent_status || null
