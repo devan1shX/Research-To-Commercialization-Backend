@@ -6,8 +6,14 @@ const path = require("path");
 const { spawn } = require("child_process");
 const Study = require("../models/study");
 const { verifyFirebaseToken } = require("../middleware/auth");
+const { v4: uuidv4 } = require('uuid');
+const { logStudyClick } = require('../utils/logger'); 
 
 const router = express.Router();
+
+const analysisJobs = {}; 
+const studyClickCounts = {}; 
+
 
 const documentsDir = path.join(__dirname, "..", "documents");
 if (!fs.existsSync(documentsDir)) {
@@ -235,24 +241,52 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const studyId = req.params.id;
+
   try {
     if (!mongoose.Types.ObjectId.isValid(studyId)) {
       return res.status(400).json({ message: "Invalid study ID format" });
     }
+
     const study = await Study.findById(studyId).lean();
+
     if (!study) {
       return res.status(404).json({ message: "Study not found" });
     }
-    res.json(study);
+
+    studyClickCounts[studyId] = (studyClickCounts[studyId] || 0) + 1;
+    logStudyClick(study, studyClickCounts[studyId]);
+
+
+    if (study.approved) {
+      return res.json(study);
+    }
+
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: "Authentication is required for this resource." });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const userId = decodedToken.uid;
+
+      if (study.researcher_id.toString() === userId) {
+        return res.json(study);
+      } else {
+        return res.status(404).json({ message: "Study not found or you do not have permission." });
+      }
+    } catch (error) {
+      return res.status(403).json({ message: "Forbidden: Invalid or expired token." });
+    }
+
   } catch (error) {
     if (error.name === "CastError" && error.kind === "ObjectId") {
-      return res
-        .status(400)
-        .json({ message: "Invalid study ID format (CastError)" });
+      return res.status(400).json({ message: "Invalid study ID format (CastError)" });
     }
-    res
-      .status(500)
-      .json({ message: "Error fetching study", error: error.message });
+    res.status(500).json({ message: "Error fetching study", error: error.message });
   }
 });
 
@@ -260,13 +294,13 @@ router.post(
   "/",
   verifyFirebaseToken,
   upload.array("study_document_files", 5),
-
   async (req, res) => {
     const researcher_id = req.user.uid;
     try {
-      const { title, abstract, brief_description, patent_status } = req.body;
+      const { title, abstract, brief_description, patent_status, analysisId } = req.body;
+
       if (!title || !abstract || !brief_description) {
-        if (req.files)
+        if (req.files) {
           req.files.forEach((file) => {
             try {
               fs.unlinkSync(file.path);
@@ -274,6 +308,7 @@ router.post(
               console.error(`Error cleaning up file ${file.path}:`, e);
             }
           });
+        }
         return res.status(400).json({
           message: "Title, abstract, and brief description are required.",
         });
@@ -284,7 +319,7 @@ router.post(
         try {
           parsedDocumentsMetadata = JSON.parse(req.body.documents_metadata);
         } catch (parseError) {
-          if (req.files)
+          if (req.files) {
             req.files.forEach((file) => {
               try {
                 fs.unlinkSync(file.path);
@@ -292,6 +327,7 @@ router.post(
                 console.error(`Error cleaning up file ${file.path}:`, e);
               }
             });
+          }
           return res
             .status(400)
             .json({ message: "Invalid documents_metadata format." });
@@ -299,7 +335,32 @@ router.post(
       }
 
       const processedDbDocuments = [];
-      if (req.files && req.files.length > 0) {
+
+      if (analysisId && analysisJobs[analysisId] && analysisJobs[analysisId].status === 'completed') {
+          const job = analysisJobs[analysisId];
+          const tempPath = job.path;
+          const metadata = parsedDocumentsMetadata[0] || {};
+          const displayName = metadata.display_name || job.originalName;
+
+          const originalExtension = path.extname(job.originalName);
+          const sanitizedBaseName = sanitizeFilename(path.parse(displayName).name || `document_${Date.now()}`);
+          const newFilename = sanitizedBaseName + originalExtension;
+          const finalPath = path.join(documentsDir, newFilename);
+          const relativePath = path.join("documents", newFilename);
+          
+          try {
+              fs.renameSync(tempPath, finalPath);
+              processedDbDocuments.push({
+                  display_name: displayName,
+                  file_location: relativePath,
+              });
+              delete analysisJobs[analysisId]; 
+          } catch (renameError) {
+              console.error(`Error moving analyzed file from ${tempPath} to ${finalPath}:`, renameError);
+              return res.status(500).json({ message: 'Error processing the analyzed document.' });
+          }
+      }
+      else if (req.files && req.files.length > 0) {
         for (let i = 0; i < req.files.length; i++) {
           const file = req.files[i];
           const metadata = parsedDocumentsMetadata[i] || {};
@@ -396,6 +457,24 @@ router.post(
     }
   }
 );
+
+setInterval(() => {
+    const now = Date.now();
+    const twoHours = 2 * 60 * 60 * 1000;
+    console.log("Running cleanup for stale analysis jobs...");
+    for (const id in analysisJobs) {
+        if (now - analysisJobs[id].createdAt > twoHours) {
+            const job = analysisJobs[id];
+            console.log(`Cleaning up stale job ${id}`);
+            if (job.path && fs.existsSync(job.path)) {
+                fs.unlink(job.path, (err) => {
+                    if (err) console.error(`Error cleaning up temp file ${job.path}:`, err);
+                });
+            }
+            delete analysisJobs[id];
+        }
+    }
+}, 60 * 60 * 1000); 
 
 router.put(
   "/:id",
@@ -553,6 +632,8 @@ router.put(
       }
       study.documents = finalDocumentsArray;
 
+      study.approved = false;
+
       if (req.body.title !== undefined) {
         study.title = req.body.title;
       }
@@ -685,5 +766,84 @@ router.delete("/:id", verifyFirebaseToken, async (req, res) => {
       .json({ message: "Error deleting study", error: error.message });
   }
 });
+
+
+
+router.post(
+    "/analyze-document-async",
+    verifyFirebaseToken,
+    upload.single("study_document"),
+    async (req, res) => {
+        if (!req.file) {
+            return res.status(400).json({ message: "No document uploaded for analysis." });
+        }
+
+        const analysisId = uuidv4();
+        const tempPdfPath = req.file.path;
+        const originalName = req.file.originalname;
+
+        analysisJobs[analysisId] = {
+            status: 'pending',
+            path: tempPdfPath,
+            originalName: originalName,
+            createdAt: Date.now()
+        };
+
+        res.status(202).json({
+            message: "Analysis started.",
+            analysisId: analysisId,
+        });
+
+        runAnalysisAndGetData(tempPdfPath)
+            .then(analysisData => {
+                const qa_pairs = [];
+                if (analysisData.answer_batches) {
+                    Object.values(analysisData.answer_batches).forEach((batch) => {
+                        (batch || []).forEach((item) => {
+                            qa_pairs.push({ question: item.question, answer: item.answer });
+                        });
+                    });
+                }
+
+                const responsePayload = {
+                    title: analysisData.extracted_metadata?.title || "",
+                    abstract: analysisData.extracted_metadata?.abstract || "",
+                    brief_description: analysisData.extracted_metadata?.brief_description || "",
+                    genres: analysisData.extracted_metadata?.genres || [],
+                    questions: qa_pairs,
+                };
+                
+                analysisJobs[analysisId] = {
+                    ...analysisJobs[analysisId],
+                    status: 'completed',
+                    data: responsePayload,
+                };
+            })
+            .catch(error => {
+                console.error("Analysis script failed for job:", analysisId, error);
+                analysisJobs[analysisId] = { ...analysisJobs[analysisId], status: 'failed', error: error.message };
+            })
+    }
+);
+
+router.get("/analysis-status/:id", verifyFirebaseToken, (req, res) => {
+    const { id } = req.params;
+    const job = analysisJobs[id];
+
+    if (!job) {
+        return res.status(404).json({ message: "Analysis job not found." });
+    }
+
+    const response = { status: job.status, originalName: job.originalName };
+
+    if (job.status === 'completed') {
+        response.data = job.data;
+    } else if (job.status === 'failed') {
+        response.error = job.error;
+    }
+    
+    res.status(200).json(response);
+});
+
 
 module.exports = router;

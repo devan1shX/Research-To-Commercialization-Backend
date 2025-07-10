@@ -1,5 +1,6 @@
 const express = require("express");
 const admin = require("firebase-admin");
+const mongoose = require("mongoose");
 const { verifyFirebaseToken } = require("../middleware/auth");
 const Study = require("../models/study"); 
 
@@ -49,6 +50,38 @@ router.get("/my-studies", verifyFirebaseToken, async (req, res) => {
         errorName: error.name,
         errorMessage: error.message,
       });
+  }
+});
+
+router.get("/my-studies/:id", verifyFirebaseToken, async (req, res) => {
+  const { id: studyId } = req.params;
+  const researcher_id = req.user.uid;
+
+  try {
+    // Check if the provided ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(studyId)) {
+      return res.status(400).json({ message: "Invalid study ID format." });
+    }
+
+    const study = await Study.findById(studyId).lean();
+
+    // Case 1: Study with that ID doesn't exist
+    if (!study) {
+      return res.status(404).json({ message: "Study not found." });
+    }
+
+    // Case 2: Study exists, but it does not belong to the user
+    if (study.researcher_id.toString() !== researcher_id) {
+      return res
+        .status(403)
+        .json({ message: "Forbidden: You do not own this study." });
+    }
+
+    // Success: The user owns the study, return it
+    res.json(study);
+    
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching your study." });
   }
 });
 
