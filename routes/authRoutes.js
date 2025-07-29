@@ -106,8 +106,8 @@ router.post("/google-signin", async (req, res) => {
       if (role) updates.role = role;
       if (phone !== undefined)
         updates.contactInfo = {
-          ...userProfileData.contactInfo,
-          phone: phone || {},
+          ...userProfileData.contactInfo || {},
+          phone: phone || null,
         };
       await userProfileRef.update(updates);
       userProfileData = {
