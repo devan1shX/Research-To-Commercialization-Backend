@@ -37,7 +37,7 @@ router.post("/chat-with-paper", verifyFirebaseToken, async (req, res) => {
             return res.status(500).json({ message: "Chatbot script not found on the server." });
         }
 
-        const pythonProcess = spawn("python", [
+        const pythonProcess = spawn("python3", [
             pythonScriptPath,
             "--prompt",
             prompt,
