@@ -31,7 +31,7 @@ app.use("/documents", express.static(path.join(__dirname, "documents")));
 
 app.use("/api/auth", authRoutes);
 app.use("/api", userRoutes);
-app.use("/studies", studyRoutes);
+app.use("/api/studies", studyRoutes);
 app.use("/studies", chatRoutes); 
 
 app.use((req, res, next) => {
