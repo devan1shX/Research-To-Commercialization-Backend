@@ -124,14 +124,13 @@ router.post("/google-signin", async (req, res) => {
         isNewUser,
         userProfile: userProfileData,
       });
-  } catch (error) {
-    if (error.code === "auth/id-token-expired")
-      return res
-        .status(401)
-        .json({ message: "Token expired, please sign in again." });
-    res
-      .status(403)
-      .json({ message: "Authentication failed", error: error.message });
+  }  catch (error) {
+    // Enhanced logging to help debug any future issues
+    console.error("[CRITICAL] /google-signin error:", error);
+    if (error.code === "auth/id-token-expired") {
+      return res.status(401).json({ message: "Token expired, please sign in again." });
+    }
+    res.status(500).json({ message: "Authentication failed on the server.", error: error.message });
   }
 });
 
