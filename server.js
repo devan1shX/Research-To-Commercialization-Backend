@@ -29,7 +29,7 @@ app.use(cors());
 app.use(express.json());
 app.use("/documents", express.static(path.join(__dirname, "documents")));
 
-app.use("/auth", authRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api", userRoutes);
 app.use("/studies", studyRoutes);
 app.use("/studies", chatRoutes); 
