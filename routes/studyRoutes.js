@@ -46,12 +46,7 @@ const upload = multer({
 
 function runAnalysisAndGetData(pdfPath) {
   return new Promise((resolve, reject) => {
-    const scriptDir = path.resolve(
-      __dirname,
-      "..",
-      "..",
-      "TechTransfer_Chatbot-Image_Worthiness_Removed"
-    );
+    const scriptDir = "/home/iiitd/TechTransfer_Chatbot-Image_Worthiness_Removed";
     const pythonScriptPath = path.join(scriptDir, "process_dataset_folder.py");
 
     const pdfNameWithoutExt = path.basename(pdfPath, path.extname(pdfPath));
@@ -63,7 +58,7 @@ function runAnalysisAndGetData(pdfPath) {
     console.log(`      PDF Input: ${pdfPath}`);
     console.log(`      Expected JSON Output: ${outputJsonPath}`);
 
-    const pythonProcess = spawn("python", [
+    const pythonProcess = spawn("python3", [
       pythonScriptPath,
       pdfPath,
       "--output_answers_dir",
