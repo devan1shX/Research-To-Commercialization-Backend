@@ -32,7 +32,7 @@ app.use("/documents", express.static(path.join(__dirname, "documents")));
 app.use("/api/auth", authRoutes);
 app.use("/api", userRoutes);
 app.use("/api/studies", studyRoutes);
-app.use("/studies", chatRoutes); 
+app.use("/api/studies", chatRoutes); 
 
 app.use((req, res, next) => {
   res.status(404).json({ message: "Sorry, can't find that route!" });
