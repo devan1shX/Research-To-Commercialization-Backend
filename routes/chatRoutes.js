@@ -25,7 +25,7 @@ router.post("/chat-with-paper", verifyFirebaseToken, async (req, res) => {
             return res.status(404).json({ message: "Study not found." });
         }
 
-        const scriptDir = path.join(os.homedir(), "TechTransfer_Chatbot-Image_Worthiness_Removed");
+        const scriptDir = "/home/iiitd/TechTransfer_Chatbot-Image_Worthiness_Removed";
         const pythonScriptPath = path.join(scriptDir, "live_chat_handler.py");
 
         if (!fs.existsSync(pythonScriptPath)) {
