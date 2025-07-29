@@ -27,7 +27,7 @@ const chatRoutes = require("./routes/chatRoutes");
 
 app.use(cors());
 app.use(express.json());
-app.use("/documents", express.static(path.join(__dirname, "documents")));
+app.use("/api/documents", express.static(path.join(__dirname, "documents")));
 
 app.use("/api/auth", authRoutes);
 app.use("/api", userRoutes);
