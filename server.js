@@ -20,24 +20,35 @@ connectDB();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Import routes
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const studyRoutes = require("./routes/studyRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 
+// FIX: Add this middleware to set the Cross-Origin-Opener-Policy header
+app.use((req, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp"); // Often needed alongside COOP
+  next();
+});
+
 app.use(cors());
 app.use(express.json());
 app.use("/api/documents", express.static(path.join(__dirname, "documents")));
 
+// API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api", userRoutes);
 app.use("/api/studies", studyRoutes);
-app.use("/api/studies", chatRoutes); 
+app.use("/api/studies", chatRoutes);
 
+// 404 Handler for API routes
 app.use((req, res, next) => {
   res.status(404).json({ message: "Sorry, can't find that route!" });
 });
 
+// Global Error Handler
 app.use((err, req, res, next) => {
   console.error("Unhandled server error:", err.name, err.message, err.stack);
   res.status(500).json({
