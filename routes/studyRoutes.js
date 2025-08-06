@@ -196,131 +196,166 @@ router.post(
 );
 
 router.get("/", async (req, res) => {
-  try {
-    const { genre, title, dateRange, page = 1, limit = 10 } = req.query;
-    const queryOptions = { approved: true };
+  try {
+    const { genre, title, dateRange, page = 1, limit = 10 } = req.query;
+    const queryOptions = { approved: true };
 
-    if (dateRange) {
-      const now = new Date();
-      let startDate;
+    if (dateRange) {
+      const now = new Date();
+      let startDate;
 
-      switch (dateRange) {
-        case "last-7-days":
-          startDate = new Date(now.setDate(now.getDate() - 7));
-          break;
-        case "last-30-days":
-          startDate = new Date(now.setDate(now.getDate() - 30));
-          break;
-        case "last-6-months":
-          startDate = new Date(now.setMonth(now.getMonth() - 6));
-          break;
-        case "last-year":
-          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-          break;
-      }
+      switch (dateRange) {
+        case "last-7-days":
+          startDate = new Date(now.setDate(now.getDate() - 7));
+          break;
+        case "last-30-days":
+          startDate = new Date(now.setDate(now.getDate() - 30));
+          break;
+        case "last-6-months":
+          startDate = new Date(now.setMonth(now.getMonth() - 6));
+          break;
+        case "last-year":
+          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+          break;
+      }
 
-      if (startDate) {
-        queryOptions.created_at = { $gte: startDate };
-      }
-    }
+      if (startDate) {
+        queryOptions.created_at = { $gte: startDate };
+      }
+    }
 
-    const andClauses = [];
+    const andClauses = [];
 
-    if (title) {
-      andClauses.push({
-        $or: [
-          { title: { $regex: title, $options: "i" } },
-          { genres: { $regex: title, $options: "i" } }, 
-        ],
-      });
-    }
+    if (title) {
+      andClauses.push({
+        $or: [
+          { title: { $regex: title, $options: "i" } },
+          { genres: { $regex: title, $options: "i" } }, 
+        ],
+      });
+    }
 
-    if (genre) {
-      if (Array.isArray(genre)) {
-        andClauses.push({
-          genres: { $in: genre.map((g) => new RegExp(g, "i")) },
-        });
-      } else {
-        andClauses.push({
-          genres: { $in: [new RegExp(genre, "i")] },
-        });
-      }
-    }
+    if (genre) {
+      if (Array.isArray(genre)) {
+        andClauses.push({
+          genres: { $in: genre.map((g) => new RegExp(g, "i")) },
+        });
+      } else {
+        andClauses.push({
+          genres: { $in: [new RegExp(genre, "i")] },
+        });
+      }
+    }
 
-    if (andClauses.length > 0) {
-      queryOptions.$and = andClauses;
-    }
+    if (andClauses.length > 0) {
+      queryOptions.$and = andClauses;
+    }
 
-    const studies = await Study.find(queryOptions)
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .sort({ created_at: -1 })
-      .lean();
+    const studies = await Study.find(queryOptions)
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .sort({ created_at: -1 })
+      .lean();
 
-    const count = await Study.countDocuments(queryOptions);
+    const count = await Study.countDocuments(queryOptions);
+    
+    const questionsToShow = [
+        "What is the title of the project or thesis?",
+        "What is the date or year of completion?",
+        "What is the field of study (e.g., CS, BioTech, etc.)?",
+        "How was the research conducted (e.g., simulations, field tests)?",
+        "What is the current Technology Readiness Level (TRL) from 1 to 9?",
+        "What is the current development status (proof-of-concept, prototype, theoretical)?",
+        "How do costs (material, resource scarcity, production) affect pricing?",
+        "Is the solution technically and commercially scalable?"
+    ];
 
-    res.json({
-      studies,
-      totalPages: Math.ceil(count / parseInt(limit)),
-      currentPage: parseInt(page),
-      totalStudies: count,
+    const filteredStudies = studies.map(study => {
+        if (study.questions && Array.isArray(study.questions)) {
+            study.questions = questionsToShow
+                .map(q_text => study.questions.find(q => q.question === q_text))
+                .filter(Boolean);
+        }
+        return study;
     });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error fetching studies", error: error.message });
-  }
+
+    res.json({
+      studies: filteredStudies,
+      totalPages: Math.ceil(count / parseInt(limit)),
+      currentPage: parseInt(page),
+      totalStudies: count,
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error fetching studies", error: error.message });
+  }
 });
 
 router.get("/:id", async (req, res) => {
-  const studyId = req.params.id;
+  const studyId = req.params.id;
 
-  try {
-    if (!mongoose.Types.ObjectId.isValid(studyId)) {
-      return res.status(400).json({ message: "Invalid study ID format" });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(studyId)) {
+      return res.status(400).json({ message: "Invalid study ID format" });
+    }
+
+    const study = await Study.findById(studyId).lean();
+
+    if (!study) {
+      return res.status(404).json({ message: "Study not found" });
+    }
+
+    const questionsToShow = [
+        "What is the title of the project or thesis?",
+        "What is the date or year of completion?",
+        "What is the field of study (e.g., CS, BioTech, etc.)?",
+        "How was the research conducted (e.g., simulations, field tests)?",
+        "What is the current Technology Readiness Level (TRL) from 1 to 9?",
+        "What is the current development status (proof-of-concept, prototype, theoretical)?",
+        "How do costs (material, resource scarcity, production) affect pricing?",
+        "Is the solution technically and commercially scalable?"
+    ];
+
+    if (study.questions && Array.isArray(study.questions)) {
+        study.questions = questionsToShow
+            .map(q_text => study.questions.find(q => q.question === q_text))
+            .filter(Boolean);
     }
 
-    const study = await Study.findById(studyId).lean();
+    studyClickCounts[studyId] = (studyClickCounts[studyId] || 0) + 1;
+    logStudyClick(study, studyClickCounts[studyId]);
 
-    if (!study) {
-      return res.status(404).json({ message: "Study not found" });
-    }
+    if (study.approved) {
+      return res.json(study);
+    }
 
-    studyClickCounts[studyId] = (studyClickCounts[studyId] || 0) + 1;
-    logStudyClick(study, studyClickCounts[studyId]);
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: "Authentication is required for this resource." });
+    }
 
+    const idToken = authHeader.split('Bearer ')[1];
 
-    if (study.approved) {
-      return res.json(study);
-    }
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const userId = decodedToken.uid;
 
+      if (study.researcher_id.toString() === userId) {
+        return res.json(study);
+      } else {
+        return res.status(404).json({ message: "Study not found or you do not have permission." });
+      }
+    } catch (error) {
+      return res.status(403).json({ message: "Forbidden: Invalid or expired token." });
+    }
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ message: "Authentication is required for this resource." });
-    }
-
-    const idToken = authHeader.split('Bearer ')[1];
-
-    try {
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const userId = decodedToken.uid;
-
-      if (study.researcher_id.toString() === userId) {
-        return res.json(study);
-      } else {
-        return res.status(404).json({ message: "Study not found or you do not have permission." });
-      }
-    } catch (error) {
-      return res.status(403).json({ message: "Forbidden: Invalid or expired token." });
-    }
-
-  } catch (error) {
-    if (error.name === "CastError" && error.kind === "ObjectId") {
-      return res.status(400).json({ message: "Invalid study ID format (CastError)" });
-    }
-    res.status(500).json({ message: "Error fetching study", error: error.message });
-  }
+  } catch (error) {
+    if (error.name === "CastError" && error.kind === "ObjectId") {
+      return res.status(400).json({ message: "Invalid study ID format (CastError)" });
+    }
+    res.status(500).json({ message: "Error fetching study", error: error.message });
+  }
 });
 
 router.post(
@@ -880,4 +915,5 @@ router.get("/analysis-status/:id", verifyFirebaseToken, (req, res) => {
 
 
 module.exports = router;
+
 
