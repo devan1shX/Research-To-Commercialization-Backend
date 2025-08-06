@@ -197,20 +197,58 @@ router.post(
 
 router.get("/", async (req, res) => {
   try {
-    const { genre, title, page = 1, limit = 10 } = req.query;
-    const queryOptions = {};
+    const { genre, title, dateRange, page = 1, limit = 10 } = req.query;
+    const queryOptions = { approved: true };
 
-    queryOptions.approved = true;
+    if (dateRange) {
+      const now = new Date();
+      let startDate;
+
+      switch (dateRange) {
+        case "last-7-days":
+          startDate = new Date(now.setDate(now.getDate() - 7));
+          break;
+        case "last-30-days":
+          startDate = new Date(now.setDate(now.getDate() - 30));
+          break;
+        case "last-6-months":
+          startDate = new Date(now.setMonth(now.getMonth() - 6));
+          break;
+        case "last-year":
+          startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+          break;
+      }
+
+      if (startDate) {
+        queryOptions.created_at = { $gte: startDate };
+      }
+    }
+
+    const andClauses = [];
+
+    if (title) {
+      andClauses.push({
+        $or: [
+          { title: { $regex: title, $options: "i" } },
+          { genres: { $regex: title, $options: "i" } }, 
+        ],
+      });
+    }
 
     if (genre) {
       if (Array.isArray(genre)) {
-        queryOptions.genres = { $in: genre.map((g) => new RegExp(g, "i")) };
+        andClauses.push({
+          genres: { $in: genre.map((g) => new RegExp(g, "i")) },
+        });
       } else {
-        queryOptions.genres = { $in: [new RegExp(genre, "i")] };
+        andClauses.push({
+          genres: { $in: [new RegExp(genre, "i")] },
+        });
       }
     }
-    if (title) {
-      queryOptions.title = { $regex: title, $options: "i" };
+
+    if (andClauses.length > 0) {
+      queryOptions.$and = andClauses;
     }
 
     const studies = await Study.find(queryOptions)
@@ -842,3 +880,4 @@ router.get("/analysis-status/:id", verifyFirebaseToken, (req, res) => {
 
 
 module.exports = router;
+
